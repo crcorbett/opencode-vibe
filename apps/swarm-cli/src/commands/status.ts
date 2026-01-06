@@ -5,10 +5,31 @@
  * Uses createWorldStream from core for SSE-wired atom-based state.
  */
 
-import { createWorldStream } from "@opencode-vibe/core/world"
+import { createWorldStream, type WorldStreamHandle, type WorldState } from "@opencode-vibe/core/world"
 import type { CommandContext } from "./index.js"
 import { write, withLinks } from "../output.js"
 import { formatWorldState, type ProjectState } from "../world-state.js"
+
+async function waitForBootstrap(stream: WorldStreamHandle, timeoutMs: number): Promise<WorldState> {
+	return new Promise((resolve) => {
+		let resolved = false
+		const unsubscribe = stream.subscribe((world) => {
+			if (resolved) return
+			if (world.instances.length > 0 && world.stats.total > 0) {
+				resolved = true
+				unsubscribe()
+				resolve(world)
+			}
+		})
+
+		setTimeout(async () => {
+			if (resolved) return
+			resolved = true
+			unsubscribe()
+			resolve(await stream.getSnapshot())
+		}, timeoutMs)
+	})
+}
 
 export async function run(context: CommandContext): Promise<void> {
 	const { output } = context
@@ -17,15 +38,10 @@ export async function run(context: CommandContext): Promise<void> {
 		console.log("🔍 Discovering servers...\n")
 	}
 
-	// Create world stream - it handles discovery and SSE internally
 	const stream = createWorldStream()
 
 	try {
-		// Wait a moment for bootstrap to complete
-		await new Promise((resolve) => setTimeout(resolve, 1000))
-
-		// Get snapshot
-		const world = await stream.getSnapshot()
+		const world = await waitForBootstrap(stream, 5000);
 
 		// Check if we found any sessions
 		if (world.stats.total === 0) {
